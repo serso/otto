@@ -32,6 +32,7 @@ import java.util.concurrent.ConcurrentMap;
  * @author Cliff Biffle
  * @author Louis Wasserman
  * @author Jake Wharton
+ * @author Sergey Solovyev
  */
 final class AnnotatedHandlerFinder {
 
@@ -163,7 +164,7 @@ final class AnnotatedHandlerFinder {
       for (Map.Entry<Class<?>, Set<Method>> e : methods.entrySet()) {
         Set<EventHandler> handlers = new HashSet<EventHandler>();
         for (Method m : e.getValue()) {
-          handlers.add(new EventHandler(listener, m));
+          handlers.add(new ReflectiveEventHandler(listener, m));
         }
         handlersInMethod.put(e.getKey(), handlers);
       }

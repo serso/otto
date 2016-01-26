@@ -26,7 +26,7 @@ import static junit.framework.Assert.assertSame;
 import static junit.framework.Assert.assertTrue;
 import static junit.framework.Assert.fail;
 
-public class EventHandlerTest {
+public class ReflectiveEventHandlerTest {
 
   private static final Object FIXTURE_ARGUMENT = new Object();
 
@@ -46,7 +46,7 @@ public class EventHandlerTest {
   @Test public void basicMethodCall() throws Exception {
     Method method = getRecordingMethod();
 
-    EventHandler handler = new EventHandler(this, method);
+    EventHandler handler = new ReflectiveEventHandler(this, method);
 
     handler.handleEvent(FIXTURE_ARGUMENT);
 
@@ -58,7 +58,7 @@ public class EventHandlerTest {
   /** Checks that EventHandler's constructor disallows null methods. */
   @Test public void rejectionOfNullMethods() {
     try {
-      new EventHandler(this, null);
+      new ReflectiveEventHandler(this, null);
       fail("EventHandler must immediately reject null methods.");
     } catch (NullPointerException expected) {
       // Hooray!
@@ -69,7 +69,7 @@ public class EventHandlerTest {
   @Test public void rejectionOfNullTargets() throws NoSuchMethodException {
     Method method = getRecordingMethod();
     try {
-      new EventHandler(null, method);
+      new ReflectiveEventHandler(null, method);
       fail("EventHandler must immediately reject null targets.");
     } catch (NullPointerException expected) {
       // Huzzah!
@@ -78,12 +78,12 @@ public class EventHandlerTest {
 
   @Test public void exceptionWrapping() throws NoSuchMethodException {
     Method method = getExceptionThrowingMethod();
-    EventHandler handler = new EventHandler(this, method);
+    EventHandler handler = new ReflectiveEventHandler(this, method);
 
     try {
       handler.handleEvent(new Object());
       fail("Handlers whose methods throw must throw InvocationTargetException");
-    } catch (InvocationTargetException e) {
+    } catch (RuntimeException e) {
       assertTrue("Expected exception must be wrapped.",
           e.getCause() instanceof IntentionalException);
     }
@@ -91,7 +91,7 @@ public class EventHandlerTest {
 
   @Test public void errorPassthrough() throws InvocationTargetException, NoSuchMethodException {
     Method method = getErrorThrowingMethod();
-    EventHandler handler = new EventHandler(this, method);
+    EventHandler handler = new ReflectiveEventHandler(this, method);
 
     try {
       handler.handleEvent(new Object());

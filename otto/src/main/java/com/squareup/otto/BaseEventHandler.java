@@ -17,30 +17,24 @@
 package com.squareup.otto;
 
 /**
- * Encapsulates information about event receiver, it's up to {@link HandlerFinder} to
- * decide what implementation to use
+ * Partial implementation of {@link EventHandler} containing common fields
  *
  * @author Sergey Solovyev
  */
-interface EventHandler {
-  /**
-   * @return current state of this {@link EventHandler}
-   * @see {@link #invalidate()}
-   */
-  boolean isValid();
+public abstract class BaseEventHandler implements EventHandler {
 
   /**
-   * If invalidated, will subsequently refuse to handle events.
-   * <p/>
-   * Should be called when the wrapped object is unregistered from the Bus.
+   * Should this handler receive events?
    */
-  void invalidate();
+  private boolean valid = true;
 
-  /**
-   * Delivers event to a subscriber
-   *
-   * @param event event to be consumed
-   * @throws RuntimeException thrown if error occurs while subscriber is processing the event
-   */
-  void handleEvent(Object event);
+  @Override
+  public boolean isValid() {
+    return valid;
+  }
+
+  @Override
+  public void invalidate() {
+    valid = false;
+  }
 }

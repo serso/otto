@@ -83,6 +83,7 @@ import java.util.concurrent.CopyOnWriteArraySet;
  *
  * @author Cliff Biffle
  * @author Jake Wharton
+ * @author Sergey Solovyev
  */
 public class Bus {
   public static final String DEFAULT_IDENTIFIER = "default";
@@ -125,6 +126,15 @@ public class Bus {
   }
 
   /**
+   * Creates a new Bus named "default" with the given {@code handlerFinder} that enforces actions on the main thread.
+   *
+   * @param handlerFinder Used to discover event handlers and producers when registering/unregistering an object.
+   */
+  public Bus(HandlerFinder handlerFinder) {
+    this(ThreadEnforcer.MAIN, handlerFinder);
+  }
+
+  /**
    * Creates a new Bus with the given {@code identifier} that enforces actions on the main thread.
    *
    * @param identifier a brief name for this bus, for debugging purposes.  Should be a valid Java identifier.
@@ -134,12 +144,33 @@ public class Bus {
   }
 
   /**
+   * Creates a new Bus with the given {@code identifier} and {@code handlerFinder} that enforces actions on the main thread.
+   *
+   * @param identifier a brief name for this bus, for debugging purposes.  Should be a valid Java identifier.
+   * @param handlerFinder Used to discover event handlers and producers when registering/unregistering an object.
+   */
+  public Bus(String identifier, HandlerFinder handlerFinder) {
+    this(ThreadEnforcer.MAIN, identifier, handlerFinder);
+  }
+
+  /**
    * Creates a new Bus named "default" with the given {@code enforcer} for actions.
    *
    * @param enforcer Thread enforcer for register, unregister, and post actions.
    */
   public Bus(ThreadEnforcer enforcer) {
     this(enforcer, DEFAULT_IDENTIFIER);
+  }
+
+  /**
+   * Creates a new Bus named "default" with the given {@code enforcer} for actions and {@code handlerFinder} for
+   * discovering subscribers/producers.
+   *
+   * @param enforcer Thread enforcer for register, unregister, and post actions.
+   * @param handlerFinder Used to discover event handlers and producers when registering/unregistering an object.
+   */
+  public Bus(ThreadEnforcer enforcer, HandlerFinder handlerFinder) {
+    this(enforcer, DEFAULT_IDENTIFIER, handlerFinder);
   }
 
   /**
@@ -153,13 +184,13 @@ public class Bus {
   }
 
   /**
-   * Test constructor which allows replacing the default {@code HandlerFinder}.
+   * Creates a new Bus with the given {@code enforcer} for actions, {@code identifier} and {@code handlerFinder}.
    *
    * @param enforcer Thread enforcer for register, unregister, and post actions.
    * @param identifier A brief name for this bus, for debugging purposes.  Should be a valid Java identifier.
    * @param handlerFinder Used to discover event handlers and producers when registering/unregistering an object.
    */
-  Bus(ThreadEnforcer enforcer, String identifier, HandlerFinder handlerFinder) {
+  public Bus(ThreadEnforcer enforcer, String identifier, HandlerFinder handlerFinder) {
     this.enforcer =  enforcer;
     this.identifier = identifier;
     this.handlerFinder = handlerFinder;
@@ -381,12 +412,7 @@ public class Bus {
    * @param wrapper wrapper that will call the handler.
    */
   protected void dispatch(Object event, EventHandler wrapper) {
-    try {
-      wrapper.handleEvent(event);
-    } catch (InvocationTargetException e) {
-      throwRuntimeException(
-          "Could not dispatch event: " + event.getClass() + " to handler " + wrapper, e);
-    }
+    wrapper.handleEvent(event);
   }
 
   /**
@@ -454,7 +480,7 @@ public class Bus {
    * InvocationTargetException}. If the specified {@link InvocationTargetException} does not have a
    * cause, neither will the {@link RuntimeException}.
    */
-  private static void throwRuntimeException(String msg, InvocationTargetException e) {
+  static void throwRuntimeException(String msg, InvocationTargetException e) {
     Throwable cause = e.getCause();
     if (cause != null) {
       throw new RuntimeException(msg + ": " + cause.getMessage(), cause);
