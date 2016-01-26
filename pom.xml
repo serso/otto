@@ -35,6 +35,7 @@
   <modules>
     <module>otto</module>
     <module>otto-sample</module>
+    <module>otto-compiler</module>
   </modules>
 
   <properties>

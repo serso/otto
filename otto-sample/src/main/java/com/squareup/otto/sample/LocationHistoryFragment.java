@@ -53,6 +53,9 @@ public class LocationHistoryFragment extends ListFragment {
     }
   }
 
+  @Subscribe public void onAnotherLocationChanged(LocationChangedEvent event) {
+  }
+
   @Subscribe public void onLocationCleared(LocationClearEvent event) {
     locationEvents.clear();
     if (adapter != null) {
