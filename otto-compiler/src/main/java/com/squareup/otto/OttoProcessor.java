@@ -26,8 +26,12 @@ import javax.lang.model.SourceVersion;
 import javax.lang.model.element.*;
 import javax.lang.model.type.TypeMirror;
 import javax.tools.Diagnostic;
+import javax.tools.JavaFileObject;
 import javax.validation.constraints.NotNull;
+import java.io.Closeable;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.util.*;
 
 /**
@@ -38,6 +42,7 @@ import java.util.*;
  */
 public final class OttoProcessor extends AbstractProcessor {
 
+  private static final byte[] BUFFER = new byte[4 * 1024];
   private static final Set<String> SUPPORTED_ANNOTATIONS = new HashSet<String>();
 
   static {
@@ -86,7 +91,7 @@ public final class OttoProcessor extends AbstractProcessor {
       final Map<TypeElement, Map<TypeMirror, List<ExecutableElement>>> methods = collectMethods(env);
       if (!methods.isEmpty()) {
         methodsInClass.putAll(methods);
-        writeToFile(generateClass(methodsInClass));
+        writeClasses(generateClass(methodsInClass));
       }
     } catch (ProcessingException e) {
       error(e.getMessage());
@@ -168,8 +173,8 @@ public final class OttoProcessor extends AbstractProcessor {
   }
 
   @NotNull
-  private CodeBlock generateHandler(@NotNull  TypeElement type, @NotNull TypeMirror eventType,@NotNull ExecutableElement method) {
-    return CodeBlock.builder().add("\nnew $T(){public void handleEvent(Object event){(($T)$N).$N(($T)event);}}", BaseEventHandler.class, type, "listener", method.getSimpleName(), eventType).build();
+  private CodeBlock generateHandler(@NotNull TypeElement type, @NotNull TypeMirror eventType, @NotNull ExecutableElement method) {
+    return CodeBlock.builder().add("\nnew $L(listener){public void handleEvent(Object event){(($T)$N).$N(($T)event);}}", "GeneratedEventHandler", type, "listener", method.getSimpleName(), eventType).build();
   }
 
   @NotNull
@@ -233,15 +238,68 @@ public final class OttoProcessor extends AbstractProcessor {
     return methodsByClass;
   }
 
-  @NotNull
-  private JavaFile writeToFile(@NotNull TypeSpec spec) throws ProcessingException {
-    final JavaFile file = JavaFile.builder(Bus.class.getPackage().getName(), spec).build();
+  private void writeClasses(@NotNull TypeSpec handleFinderSpec) throws ProcessingException {
+    writeHandlerFinder(handleFinderSpec);
+    writeEventHandler();
+  }
+
+  private void writeEventHandler() throws ProcessingException {
+    InputStream from = null;
+    OutputStream to = null;
+    JavaFileObject file = null;
+    try {
+      from = OttoProcessor.class.getResourceAsStream("/com/squareup/otto/GeneratedEventHandler.java");
+      file = filer.createSourceFile(getPackageName() + ".GeneratedEventHandler");
+      to = file.openOutputStream();
+      copy(from, to);
+      file = null;
+    } catch (IOException e) {
+      throw new ProcessingException(e);
+    } finally {
+      close(from);
+      close(to);
+      if (file != null) {
+        file.delete();
+      }
+    }
+  }
+
+  public static long copy(@NotNull InputStream from, @NotNull OutputStream to) throws IOException {
+    long total = 0;
+    while (true) {
+      final int r = from.read(BUFFER);
+      if (r == -1) {
+        break;
+      }
+      to.write(BUFFER, 0, r);
+      total += r;
+    }
+    return total;
+  }
+
+  private void close(@NotNull Closeable c) {
+    if (c == null) {
+      return;
+    }
+    try {
+      c.close();
+    } catch (IOException e) {
+      error(e.getMessage());
+    }
+  }
+
+  private void writeHandlerFinder(@NotNull TypeSpec spec) throws ProcessingException {
+    final JavaFile file = JavaFile.builder(getPackageName(), spec).build();
     try {
       file.writeTo(filer);
     } catch (IOException e) {
       throw new ProcessingException(e);
     }
-    return file;
+  }
+
+  @NotNull
+  private String getPackageName() {
+    return Bus.class.getPackage().getName();
   }
 
   private void error(@NotNull String msg) {
