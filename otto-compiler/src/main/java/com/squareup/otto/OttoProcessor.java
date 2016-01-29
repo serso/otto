@@ -32,21 +32,36 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.lang.reflect.Method;
 import java.util.*;
 
 /**
+ * <p>
  * Annotation processor which generates a single class which provides event handlers according to {@link Subscribe}
  * annotation and event producers according to {@link Produce} annotation.
+ * </p>
+ * <p>
+ * This processor can generate {@link HandlerFinder} of two types: 'anonymous' where no reflection is used and 'reflective'
+ * where actual method calls are done via reflection.<br/>
+ * The downside of 'anonymous' approach is that for each subscriber's method an anonymous class is generated.<br/>
+ * 'Reflective' event handlers use reflection for delivering events, however, the lookup is done in a constant time by
+ * function's name and event type.<br/>
+ * By default, 'reflective' event handlers are generated, to change this use '-Aotto.generate' javac option
+ * ('-Aotto.generate=anonymous' for anonymous and '-Aotto.generate=reflective' for reflective)
+ * </p>
  *
  * @author Sergey Solovyev
  */
 public final class OttoProcessor extends AbstractProcessor {
 
   private static final byte[] BUFFER = new byte[4 * 1024];
-  private static final Set<String> SUPPORTED_ANNOTATIONS = new HashSet<String>();
+  private static final Set<String> ANNOTATIONS = new HashSet<String>();
+  private static final Set<String> OPTIONS = new HashSet<String>();
+  private static final String OPTION_GENERATE = "otto.generate";
 
   static {
-    SUPPORTED_ANNOTATIONS.add(Subscribe.class.getName());
+    ANNOTATIONS.add(Subscribe.class.getName());
+    OPTIONS.add(OPTION_GENERATE);
   }
 
   @NotNull
@@ -55,6 +70,7 @@ public final class OttoProcessor extends AbstractProcessor {
   private Messager messager;
   @NotNull
   private Map<TypeElement, Map<TypeMirror, List<ExecutableElement>>> methodsInClass = new HashMap<TypeElement, Map<TypeMirror, List<ExecutableElement>>>();
+  private boolean anonymous;
 
   public OttoProcessor() {
   }
@@ -77,6 +93,17 @@ public final class OttoProcessor extends AbstractProcessor {
     filer = env.getFiler();
     messager = env.getMessager();
     methodsInClass.clear();
+    final Map<String, String> options = env.getOptions();
+    final String generateOption = options.get(OPTION_GENERATE);
+    if (generateOption == null) {
+      anonymous = false;
+    } else if ("anonymous".equals(generateOption)) {
+      anonymous = true;
+    } else if ("reflective".equals(generateOption)) {
+      anonymous = false;
+    } else {
+      throw new IllegalArgumentException("Invalid value for 'otto.generate'. Expected: 'anonymous' or 'reflective', got: " + generateOption);
+    }
     info("OttoProcessor#init");
   }
 
@@ -107,9 +134,29 @@ public final class OttoProcessor extends AbstractProcessor {
             .addModifiers(Modifier.PUBLIC, Modifier.FINAL)
             .addSuperinterface(HandlerFinder.class)
             .addMethod(generateFindAllProducers())
-            .addMethod(generateFindAllSubscribers(methodsByClass)).build();
+            .addMethod(generateFindAllSubscribers(methodsByClass))
+            .addMethod(generateLookupMethod())
+            .build();
   }
 
+  @NotNull
+  private MethodSpec generateLookupMethod() {
+    return MethodSpec.methodBuilder("lookupMethod")
+            .addModifiers(Modifier.PUBLIC, Modifier.STATIC)
+            .addParameter(Class.class, "type")
+            .addParameter(String.class, "methodName")
+            .addParameter(Class.class, "eventType")
+            .addCode(
+                    CodeBlock.builder().add("try {\n" +
+                            "    return type.getDeclaredMethod(methodName, eventType);\n" +
+                            "} catch ($T e) {\n" +
+                            "    throw new $T(e);\n" +
+                            "}\n", NoSuchMethodException.class, IllegalArgumentException.class).build())
+            .returns(Method.class)
+            .build();
+  }
+
+  @NotNull
   private MethodSpec generateFindAllSubscribers(@NotNull Map<TypeElement, Map<TypeMirror, List<ExecutableElement>>> methodsByClass) {
     final MethodSpec.Builder builder = MethodSpec.methodBuilder("findAllSubscribers")
             .addModifiers(Modifier.PUBLIC)
@@ -174,7 +221,11 @@ public final class OttoProcessor extends AbstractProcessor {
 
   @NotNull
   private CodeBlock generateHandler(@NotNull TypeElement type, @NotNull TypeMirror eventType, @NotNull ExecutableElement method) {
-    return CodeBlock.builder().add("\nnew $L(listener){public void handleEvent(Object event){(($T)$N).$N(($T)event);}}", "GeneratedEventHandler", type, "listener", method.getSimpleName(), eventType).build();
+    if (anonymous) {
+      return CodeBlock.builder().add("\nnew $L(listener){public void handleEvent(Object event){(($T)listener).$N(($T)event);}}", "GeneratedEventHandler", type, method.getSimpleName(), eventType).build();
+    } else {
+      return CodeBlock.builder().add("\nnew ReflectiveEventHandler(listener, lookupMethod($T.class, $S, $T.class))", type, method.getSimpleName(), eventType).build();
+    }
   }
 
   @NotNull
@@ -186,9 +237,11 @@ public final class OttoProcessor extends AbstractProcessor {
         throw new ProcessingException(e.getSimpleName() + " is annotated with @Subscribe but is not a method");
       }
       final ExecutableElement method = (ExecutableElement) e;
-      // methods must be public as generated code will call it directly
-      if (!method.getModifiers().contains(Modifier.PUBLIC)) {
-        throw new ProcessingException("Method is not public: " + method.getSimpleName());
+      if (anonymous) {
+        // methods must be public as generated code will call it directly
+        if (!method.getModifiers().contains(Modifier.PUBLIC)) {
+          throw new ProcessingException("Method is not public: " + method.getSimpleName());
+        }
       }
       final List<? extends VariableElement> parameters = method.getParameters();
       // there must be only one parameter
@@ -198,10 +251,12 @@ public final class OttoProcessor extends AbstractProcessor {
       if (parameters.size() > 1) {
         throw new ProcessingException("Too many arguments in: " + method.getSimpleName());
       }
-      // method shouldn't throw exceptions
-      final List<? extends TypeMirror> exceptions = method.getThrownTypes();
-      if (exceptions != null && exceptions.size() > 0) {
-        throw new ProcessingException("Method shouldn't throw exceptions: " + method.getSimpleName());
+      if (anonymous) {
+        // method shouldn't throw checked exceptions
+        final List<? extends TypeMirror> exceptions = method.getThrownTypes();
+        if (exceptions != null && exceptions.size() > 0) {
+          throw new ProcessingException("Method shouldn't throw exceptions: " + method.getSimpleName());
+        }
       }
       final TypeElement type = findEnclosingTypeElement(e);
       // class should exist
@@ -316,8 +371,13 @@ public final class OttoProcessor extends AbstractProcessor {
   }
 
   @Override
+  public Set<String> getSupportedOptions() {
+    return OPTIONS;
+  }
+
+  @Override
   public Set<String> getSupportedAnnotationTypes() {
-    return SUPPORTED_ANNOTATIONS;
+    return ANNOTATIONS;
   }
 
   private static final class ProcessingException extends Exception {
